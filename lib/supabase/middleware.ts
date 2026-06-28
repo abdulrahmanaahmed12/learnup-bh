@@ -38,8 +38,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Protect admin routes
-  if (request.nextUrl.pathname.startsWith('/admin')) {
+  // Protect admin routes (except the setup page itself)
+  if (request.nextUrl.pathname.startsWith('/admin') && request.nextUrl.pathname !== '/admin/setup') {
     if (!user) {
       const url = request.nextUrl.clone()
       url.pathname = '/auth/login'
