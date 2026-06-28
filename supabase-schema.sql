@@ -1,15 +1,16 @@
 -- ============================================
--- LearnUp.bh — Supabase Schema
+-- LearnUp.bh — Full Supabase Schema v2
 -- Run this in Supabase SQL Editor
 -- ============================================
 
--- Enable pgvector extension for RAG
+-- Enable extensions
 create extension if not exists vector;
+create extension if not exists pg_trgm; -- for Arabic full-text search
 
 -- ============================================
--- PROFILES (extends Supabase auth.users)
+-- PROFILES
 -- ============================================
-create table profiles (
+create table if not exists profiles (
   id uuid references auth.users on delete cascade primary key,
   full_name text,
   email text,
@@ -18,20 +19,17 @@ create table profiles (
   created_at timestamptz default now()
 );
 
--- Auto-create profile on signup
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
   insert into public.profiles (id, email, full_name)
-  values (
-    new.id,
-    new.email,
-    new.raw_user_meta_data->>'full_name'
-  );
+  values (new.id, new.email, new.raw_user_meta_data->>'full_name')
+  on conflict (id) do nothing;
   return new;
 end;
 $$ language plpgsql security definer;
 
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
@@ -39,7 +37,7 @@ create trigger on_auth_user_created
 -- ============================================
 -- SUBJECTS
 -- ============================================
-create table subjects (
+create table if not exists subjects (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   name_en text not null,
@@ -56,7 +54,7 @@ create table subjects (
 -- ============================================
 -- LESSONS
 -- ============================================
-create table lessons (
+create table if not exists lessons (
   id uuid primary key default gen_random_uuid(),
   subject_id uuid references subjects on delete cascade,
   title text not null,
@@ -71,7 +69,7 @@ create table lessons (
 -- ============================================
 -- SUBJECT FILES
 -- ============================================
-create table subject_files (
+create table if not exists subject_files (
   id uuid primary key default gen_random_uuid(),
   subject_id uuid references subjects on delete cascade,
   name text not null,
@@ -83,7 +81,7 @@ create table subject_files (
 -- ============================================
 -- STUDENT ACCESS
 -- ============================================
-create table student_access (
+create table if not exists student_access (
   id uuid primary key default gen_random_uuid(),
   student_id uuid references profiles on delete cascade,
   subject_id uuid references subjects on delete cascade,
@@ -96,7 +94,7 @@ create table student_access (
 -- ============================================
 -- PAYMENT REQUESTS
 -- ============================================
-create table payment_requests (
+create table if not exists payment_requests (
   id uuid primary key default gen_random_uuid(),
   student_id uuid references profiles on delete cascade,
   subject_id uuid references subjects on delete cascade,
@@ -113,7 +111,7 @@ create table payment_requests (
 -- ============================================
 -- COMMENTS
 -- ============================================
-create table comments (
+create table if not exists comments (
   id uuid primary key default gen_random_uuid(),
   lesson_id uuid references lessons on delete cascade,
   student_id uuid references profiles on delete cascade,
@@ -123,9 +121,67 @@ create table comments (
 );
 
 -- ============================================
--- DOCUMENTS (RAG embeddings)
+-- LESSON PROGRESS (NEW)
 -- ============================================
-create table documents (
+create table if not exists lesson_progress (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references profiles on delete cascade,
+  lesson_id uuid references lessons on delete cascade,
+  subject_id uuid references subjects on delete cascade,
+  completed boolean default true,
+  completed_at timestamptz default now(),
+  unique(student_id, lesson_id)
+);
+
+-- ============================================
+-- QUIZZES (NEW)
+-- ============================================
+create table if not exists quizzes (
+  id uuid primary key default gen_random_uuid(),
+  lesson_id uuid references lessons on delete cascade,
+  subject_id uuid references subjects on delete cascade,
+  title text not null,
+  created_at timestamptz default now()
+);
+
+create table if not exists quiz_questions (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid references quizzes on delete cascade,
+  question text not null,
+  options jsonb not null,        -- ['a','b','c','d']
+  correct_index int not null,    -- 0-based
+  order_index int default 0,
+  explanation text               -- shown after answering
+);
+
+create table if not exists quiz_results (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references profiles on delete cascade,
+  quiz_id uuid references quizzes on delete cascade,
+  lesson_id uuid references lessons on delete cascade,
+  score int not null,
+  total int not null,
+  answers jsonb,                 -- [{question_id, selected, correct}]
+  completed_at timestamptz default now(),
+  unique(student_id, quiz_id)
+);
+
+-- ============================================
+-- STUDENT NOTES (NEW)
+-- ============================================
+create table if not exists lesson_notes (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references profiles on delete cascade,
+  lesson_id uuid references lessons on delete cascade,
+  content text not null default '',
+  updated_at timestamptz default now(),
+  unique(student_id, lesson_id)
+);
+
+-- ============================================
+-- DOCUMENTS (RAG)
+-- ============================================
+create table if not exists documents (
   id uuid primary key default gen_random_uuid(),
   subject_id uuid references subjects on delete cascade,
   content text not null,
@@ -134,8 +190,13 @@ create table documents (
   created_at timestamptz default now()
 );
 
-create index on documents using ivfflat (embedding vector_cosine_ops)
+create index if not exists documents_embedding_idx
+  on documents using ivfflat (embedding vector_cosine_ops)
   with (lists = 100);
+
+-- Full-text search index on subjects
+create index if not exists subjects_search_idx
+  on subjects using gin (to_tsvector('arabic', coalesce(name,'') || ' ' || coalesce(description,'')));
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -143,39 +204,43 @@ create index on documents using ivfflat (embedding vector_cosine_ops)
 
 -- Profiles
 alter table profiles enable row level security;
+drop policy if exists "Users can view own profile" on profiles;
+drop policy if exists "Admins can view all profiles" on profiles;
+drop policy if exists "Users can update own profile" on profiles;
 create policy "Users can view own profile" on profiles for select using (auth.uid() = id);
 create policy "Users can update own profile" on profiles for update using (auth.uid() = id);
 create policy "Admins can view all profiles" on profiles for select using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
--- Subjects (public read)
+-- Subjects
 alter table subjects enable row level security;
+drop policy if exists "Anyone can view active subjects" on subjects;
+drop policy if exists "Admins can manage subjects" on subjects;
 create policy "Anyone can view active subjects" on subjects for select using (is_active = true);
 create policy "Admins can manage subjects" on subjects for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
--- Lessons (free lessons public, paid need access)
+-- Lessons
 alter table lessons enable row level security;
+drop policy if exists "Anyone can view free lessons" on lessons;
+drop policy if exists "Students with access can view lessons" on lessons;
+drop policy if exists "Admins can manage lessons" on lessons;
 create policy "Anyone can view free lessons" on lessons for select using (is_free = true);
 create policy "Students with access can view lessons" on lessons for select using (
-  exists (
-    select 1 from student_access
-    where student_id = auth.uid() and subject_id = lessons.subject_id
-  )
+  exists (select 1 from student_access where student_id = auth.uid() and subject_id = lessons.subject_id)
 );
 create policy "Admins can manage lessons" on lessons for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
--- Subject files (need access)
+-- Subject files
 alter table subject_files enable row level security;
+drop policy if exists "Students with access can view files" on subject_files;
+drop policy if exists "Admins can manage files" on subject_files;
 create policy "Students with access can view files" on subject_files for select using (
-  exists (
-    select 1 from student_access
-    where student_id = auth.uid() and subject_id = subject_files.subject_id
-  )
+  exists (select 1 from student_access where student_id = auth.uid() and subject_id = subject_files.subject_id)
 );
 create policy "Admins can manage files" on subject_files for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
@@ -183,6 +248,8 @@ create policy "Admins can manage files" on subject_files for all using (
 
 -- Student access
 alter table student_access enable row level security;
+drop policy if exists "Students can view own access" on student_access;
+drop policy if exists "Admins can manage access" on student_access;
 create policy "Students can view own access" on student_access for select using (student_id = auth.uid());
 create policy "Admins can manage access" on student_access for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
@@ -190,6 +257,9 @@ create policy "Admins can manage access" on student_access for all using (
 
 -- Payment requests
 alter table payment_requests enable row level security;
+drop policy if exists "Students can view own payments" on payment_requests;
+drop policy if exists "Students can create payments" on payment_requests;
+drop policy if exists "Admins can manage payments" on payment_requests;
 create policy "Students can view own payments" on payment_requests for select using (student_id = auth.uid());
 create policy "Students can create payments" on payment_requests for insert with check (student_id = auth.uid());
 create policy "Admins can manage payments" on payment_requests for all using (
@@ -198,6 +268,9 @@ create policy "Admins can manage payments" on payment_requests for all using (
 
 -- Comments
 alter table comments enable row level security;
+drop policy if exists "Anyone with lesson access can view comments" on comments;
+drop policy if exists "Students can insert comments" on comments;
+drop policy if exists "Admins can manage comments" on comments;
 create policy "Anyone with lesson access can view comments" on comments for select using (
   exists (
     select 1 from lessons l
@@ -206,36 +279,78 @@ create policy "Anyone with lesson access can view comments" on comments for sele
   )
 );
 create policy "Students can insert comments" on comments for insert with check (student_id = auth.uid());
+create policy "Students can delete own comments" on comments for delete using (student_id = auth.uid());
 create policy "Admins can manage comments" on comments for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
--- Documents (server-side only via service role)
+-- Lesson progress
+alter table lesson_progress enable row level security;
+create policy "Students can manage own progress" on lesson_progress for all using (student_id = auth.uid());
+create policy "Admins can view all progress" on lesson_progress for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- Quizzes
+alter table quizzes enable row level security;
+create policy "Students with access can view quizzes" on quizzes for select using (
+  exists (select 1 from student_access where student_id = auth.uid() and subject_id = quizzes.subject_id)
+);
+create policy "Admins can manage quizzes" on quizzes for all using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+alter table quiz_questions enable row level security;
+create policy "Students can view quiz questions" on quiz_questions for select using (
+  exists (
+    select 1 from quizzes q
+    join student_access sa on sa.subject_id = q.subject_id and sa.student_id = auth.uid()
+    where q.id = quiz_questions.quiz_id
+  )
+);
+create policy "Admins can manage quiz questions" on quiz_questions for all using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+alter table quiz_results enable row level security;
+create policy "Students can manage own results" on quiz_results for all using (student_id = auth.uid());
+create policy "Admins can view results" on quiz_results for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- Notes
+alter table lesson_notes enable row level security;
+create policy "Students can manage own notes" on lesson_notes for all using (student_id = auth.uid());
+
+-- Documents
 alter table documents enable row level security;
 create policy "Admins can manage documents" on documents for all using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
 -- ============================================
--- STORAGE BUCKETS
--- (Run in Supabase Dashboard > Storage)
+-- STORAGE BUCKETS (create in Supabase Dashboard)
 -- ============================================
--- Create these buckets:
---   "payments"  (private) — payment screenshots
---   "files"     (public)  — subject PDFs
---   "public"    (public)  — QR codes, images
+-- "payments"  private  — payment screenshots
+-- "files"     public   — subject PDFs
+-- "public"    public   — QR codes, images
 
 -- ============================================
--- SEED: Make yourself admin
+-- REALTIME (enable in Supabase Dashboard > Database > Replication)
 -- ============================================
--- After creating your account, run:
--- update profiles set role = 'admin' where email = 'abdulrahman@learnup.bh';
+-- Enable realtime for: payment_requests, lesson_progress
 
 -- ============================================
--- SEED: Sample subjects
+-- MAKE YOURSELF ADMIN
+-- ============================================
+-- update profiles set role = 'admin' where email = 'learnupbh@gmail.com';
+
+-- ============================================
+-- SEED DATA
 -- ============================================
 insert into subjects (name, name_en, description, icon, level, price) values
   ('الرياضيات', 'Mathematics', 'الجبر، الهندسة، التفاضل والتكامل', '📐', array['ثانوي', 'جامعي'], 5.000),
   ('الفيزياء', 'Physics', 'الميكانيكا، الكهرباء، الموجات', '⚡', array['ثانوي'], 5.000),
   ('الكيمياء', 'Chemistry', 'الكيمياء العضوية وغير العضوية', '🧪', array['ثانوي'], 5.000),
-  ('تقنية المعلومات', 'Information Technology', 'البرمجة، الشبكات، قواعد البيانات', '💻', array['ثانوي', 'جامعي'], 5.000);
+  ('تقنية المعلومات', 'Information Technology', 'البرمجة، الشبكات، قواعد البيانات', '💻', array['ثانوي', 'جامعي'], 5.000)
+on conflict do nothing;

@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Navbar from '@/components/layout/Navbar'
 import Link from 'next/link'
-import { Lock, Play, FileText, Bot, CreditCard, CheckCircle, Clock } from 'lucide-react'
+import { Lock, Play, FileText, Bot, CreditCard, CheckCircle, Clock, Award, MessageCircle } from 'lucide-react'
 import type { Profile, Lesson } from '@/lib/types'
 
 interface Props {
@@ -35,6 +35,7 @@ export default async function SubjectPage({ params }: Props) {
     .order('order_index')
 
   let hasAccess = false
+  const completedIds: Set<string> = new Set()
   if (user) {
     const { data: access } = await supabase
       .from('student_access')
@@ -43,7 +44,23 @@ export default async function SubjectPage({ params }: Props) {
       .eq('subject_id', subjectId)
       .maybeSingle()
     hasAccess = !!access
+
+    if (hasAccess && lessons) {
+      const { data: progressRows } = await supabase
+        .from('lesson_progress')
+        .select('lesson_id')
+        .eq('student_id', user.id)
+        .eq('subject_id', subjectId)
+      progressRows?.forEach((r) => completedIds.add(r.lesson_id))
+    }
   }
+
+  const totalLessons = lessons?.length ?? 0
+  const completedCount = completedIds.size
+  const progressPct = totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0
+  const allCompleted = totalLessons > 0 && completedCount === totalLessons
+
+  const whatsappMsg = encodeURIComponent(`أريد الاشتراك في مادة ${subject.name} - LearnUp.bh`)
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#32004d' }}>
@@ -51,8 +68,8 @@ export default async function SubjectPage({ params }: Props) {
 
       <main className="max-w-5xl mx-auto px-4 py-10">
         {/* Header */}
-        <div className="mb-10 p-8 rounded-2xl border border-white/10" style={{ background: '#500078' }}>
-          <div className="flex flex-col md:flex-row md:items-center gap-6">
+        <div className="mb-8 p-8 rounded-2xl border border-white/10" style={{ background: '#500078' }}>
+          <div className="flex flex-col md:flex-row md:items-start gap-6">
             <div className="text-6xl">{subject.icon || '📖'}</div>
             <div className="flex-1">
               <h1 className="text-3xl font-black text-white mb-1">{subject.name}</h1>
@@ -63,11 +80,36 @@ export default async function SubjectPage({ params }: Props) {
                   <span key={l} className="text-xs px-3 py-1 rounded-full text-purple-200" style={{ background: 'rgba(255,255,255,0.1)' }}>{l}</span>
                 ))}
               </div>
+
+              {/* Progress bar (enrolled students only) */}
+              {hasAccess && totalLessons > 0 && (
+                <div className="mt-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-white/60 text-sm">تقدّمك</span>
+                    <span className="text-purple-300 text-sm font-bold">{completedCount}/{totalLessons} درس ({progressPct}%)</span>
+                  </div>
+                  <div className="w-full bg-white/10 rounded-full h-2">
+                    <div
+                      className="h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${progressPct}%`, background: 'linear-gradient(90deg, #500078, #6b009f)' }}
+                    />
+                  </div>
+                  {allCompleted && (
+                    <Link
+                      href={`/certificate/${subjectId}`}
+                      className="inline-flex items-center gap-2 mt-3 text-yellow-400 text-sm font-semibold hover:text-yellow-300 transition-colors"
+                    >
+                      <Award size={16} /> احصل على شهادتك الآن!
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
+
             {hasAccess ? (
               <div className="flex flex-col gap-2 shrink-0">
-                <span className="flex items-center gap-2 text-green-400 font-semibold">
-                  <CheckCircle size={18} /> وصول مفعّل
+                <span className="flex items-center gap-2 text-green-400 font-semibold text-sm">
+                  <CheckCircle size={16} /> وصول مفعّل
                 </span>
                 <Link
                   href={`/subjects/${subjectId}/ai`}
@@ -82,28 +124,54 @@ export default async function SubjectPage({ params }: Props) {
                 >
                   <FileText size={16} /> الملفات والكتب
                 </Link>
+                <Link
+                  href="/leaderboard"
+                  className="flex items-center justify-center gap-2 px-5 py-2 rounded-xl text-white/60 text-xs border border-white/10 hover:bg-white/5 transition-all"
+                >
+                  🏆 المتصدرون
+                </Link>
               </div>
             ) : (
               <div className="shrink-0 text-center">
                 {subject.price && (
-                  <div className="text-2xl font-black text-white mb-2">{subject.price} BD</div>
+                  <div className="text-2xl font-black text-white mb-3">{subject.price} BD</div>
                 )}
                 {user ? (
-                  <Link
-                    href={`/payment/${subjectId}`}
-                    className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-bold transition-all hover:opacity-90"
-                    style={{ background: 'linear-gradient(135deg, #500078, #6b009f)' }}
-                  >
-                    <CreditCard size={16} /> اشترك الآن
-                  </Link>
+                  <div className="flex flex-col gap-2">
+                    <Link
+                      href={`/payment/${subjectId}`}
+                      className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-bold transition-all hover:opacity-90"
+                      style={{ background: 'linear-gradient(135deg, #500078, #6b009f)' }}
+                    >
+                      <CreditCard size={16} /> اشترك الآن
+                    </Link>
+                    <a
+                      href={`https://wa.me/97338086464?text=${whatsappMsg}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-sm border border-green-500/30 hover:bg-green-500/10 transition-all"
+                    >
+                      <MessageCircle size={16} className="text-green-400" /> اسأل عبر واتساب
+                    </a>
+                  </div>
                 ) : (
-                  <Link
-                    href="/auth/register"
-                    className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-bold transition-all hover:opacity-90"
-                    style={{ background: 'linear-gradient(135deg, #500078, #6b009f)' }}
-                  >
-                    سجّل للوصول
-                  </Link>
+                  <div className="flex flex-col gap-2">
+                    <Link
+                      href="/auth/register"
+                      className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-bold transition-all hover:opacity-90"
+                      style={{ background: 'linear-gradient(135deg, #500078, #6b009f)' }}
+                    >
+                      سجّل للوصول
+                    </Link>
+                    <a
+                      href={`https://wa.me/97338086464?text=${whatsappMsg}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white/60 text-sm border border-green-500/30 hover:bg-green-500/10 transition-all"
+                    >
+                      <MessageCircle size={16} className="text-green-400" /> واتساب
+                    </a>
+                  </div>
                 )}
               </div>
             )}
@@ -112,10 +180,11 @@ export default async function SubjectPage({ params }: Props) {
 
         {/* Lessons */}
         <section>
-          <h2 className="text-xl font-bold text-white mb-5">قائمة الدروس ({lessons?.length ?? 0})</h2>
+          <h2 className="text-xl font-bold text-white mb-5">قائمة الدروس ({totalLessons})</h2>
           <div className="space-y-3">
             {lessons?.map((lesson: Lesson, idx: number) => {
               const canAccess = lesson.is_free || hasAccess
+              const isCompleted = completedIds.has(lesson.id)
               return (
                 <LessonRow
                   key={lesson.id}
@@ -123,6 +192,7 @@ export default async function SubjectPage({ params }: Props) {
                   index={idx + 1}
                   subjectId={subjectId}
                   canAccess={canAccess}
+                  isCompleted={isCompleted}
                 />
               )
             })}
@@ -144,11 +214,13 @@ function LessonRow({
   index,
   subjectId,
   canAccess,
+  isCompleted,
 }: {
   lesson: Lesson
   index: number
   subjectId: string
   canAccess: boolean
+  isCompleted: boolean
 }) {
   const inner = (
     <div
@@ -156,17 +228,17 @@ function LessonRow({
         canAccess
           ? 'border-white/10 hover:border-purple-400/40 cursor-pointer'
           : 'border-white/5 opacity-60'
-      }`}
+      } ${isCompleted ? 'border-green-500/20' : ''}`}
       style={{ background: '#500078' }}
     >
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold"
-        style={{ background: canAccess ? 'linear-gradient(135deg, #500078, #6b009f)' : 'rgba(255,255,255,0.05)' }}
+        style={{ background: isCompleted ? '#16a34a' : canAccess ? 'linear-gradient(135deg, #500078, #6b009f)' : 'rgba(255,255,255,0.05)' }}
       >
-        {canAccess ? index : <Lock size={14} />}
+        {isCompleted ? '✓' : canAccess ? index : <Lock size={14} />}
       </div>
       <div className="flex-1 min-w-0">
-        <h3 className="text-white font-semibold truncate">{lesson.title}</h3>
+        <h3 className={`font-semibold truncate ${isCompleted ? 'text-green-300' : 'text-white'}`}>{lesson.title}</h3>
         {lesson.description && (
           <p className="text-white/40 text-sm truncate">{lesson.description}</p>
         )}
@@ -183,7 +255,7 @@ function LessonRow({
           </span>
         )}
         {canAccess ? (
-          <Play size={16} className="text-purple-300" />
+          isCompleted ? <CheckCircle size={16} className="text-green-400" /> : <Play size={16} className="text-purple-300" />
         ) : (
           <Lock size={14} className="text-white/20" />
         )}
@@ -192,11 +264,7 @@ function LessonRow({
   )
 
   if (canAccess) {
-    return (
-      <Link href={`/subjects/${subjectId}/lessons/${lesson.id}`}>
-        {inner}
-      </Link>
-    )
+    return <Link href={`/subjects/${subjectId}/lessons/${lesson.id}`}>{inner}</Link>
   }
   return inner
 }

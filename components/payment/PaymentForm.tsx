@@ -69,7 +69,15 @@ export default function PaymentForm({ subject, userId }: Props) {
       <div className="text-center p-10 rounded-2xl border border-white/10" style={{ background: '#500078' }}>
         <CheckCircle size={48} className="mx-auto mb-4 text-green-400" />
         <h2 className="text-xl font-bold text-white mb-3">تم إرسال طلبك!</h2>
-        <p className="text-white/60">سيتم مراجعته خلال 24 ساعة وستصلك رسالة بريد إلكتروني عند الموافقة.</p>
+        <p className="text-white/60 mb-5">سيتم مراجعته خلال 24 ساعة وستصلك رسالة بريد إلكتروني عند الموافقة.</p>
+        <a
+          href="https://wa.me/97338086464?text=أرسلت طلب دفع، هل يمكنك التأكيد؟"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-all text-sm"
+        >
+          💬 تتبع طلبك عبر واتساب
+        </a>
       </div>
     )
   }
@@ -106,7 +114,14 @@ export default function PaymentForm({ subject, userId }: Props) {
                 />
               </div>
             ) : (
-              <p className="text-white/50 text-center">تواصل معنا على واتساب للحصول على تفاصيل الدفع</p>
+              <a
+                href="https://wa.me/97338086464?text=أريد الدفع عبر BenefitPay للاشتراك في المادة"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 p-4 rounded-xl border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-all text-sm font-semibold"
+              >
+                💬 تواصل معنا على واتساب لتفاصيل الدفع
+              </a>
             )}
             <div className="p-4 rounded-xl text-sm text-white/70 space-y-1.5" style={{ background: 'rgba(255,255,255,0.05)' }}>
               <p>1. افتح تطبيق BenefitPay</p>

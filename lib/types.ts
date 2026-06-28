@@ -82,3 +82,49 @@ export interface ChatMessage {
   content: string
   sources?: Array<{ page: number; file_name: string }>
 }
+
+export interface LessonProgress {
+  id: string
+  student_id: string
+  lesson_id: string
+  subject_id: string
+  completed: boolean
+  completed_at: string
+}
+
+export interface Quiz {
+  id: string
+  lesson_id: string
+  subject_id: string
+  title: string
+  created_at: string
+}
+
+export interface QuizQuestion {
+  id: string
+  quiz_id: string
+  question: string
+  options: string[]
+  correct_index: number
+  order_index: number
+  explanation: string | null
+}
+
+export interface QuizResult {
+  id: string
+  student_id: string
+  quiz_id: string
+  lesson_id: string
+  score: number
+  total: number
+  answers: Array<{ question_id: string; selected: number; correct: boolean }>
+  completed_at: string
+}
+
+export interface LessonNote {
+  id: string
+  student_id: string
+  lesson_id: string
+  content: string
+  updated_at: string
+}
